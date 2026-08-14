@@ -39,8 +39,46 @@
  * POST ?action=toggle-gift-code
  * POST ?action=delete-gift-code
  */
+const crypto = require("crypto");
 const { createClient } = require("@supabase/supabase-js");
+const { initiateTransfer } = require("../lib/targetgrowths");
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+
+const BANK_CODES = {
+  access: "NGR044", "access bank": "NGR044", "access bank plc": "NGR044",
+  gtbank: "NGR058", "gt bank": "NGR058", "guaranty trust bank": "NGR058", "gtco": "NGR058", "gtco bank": "NGR058",
+  "first bank": "NGR011", "first bank of nigeria": "NGR011",
+  wema: "NGR035", "wema bank": "NGR035",
+  zenith: "NGR057", "zenith bank": "NGR057",
+  uba: "NGR033", "united bank for africa": "NGR033",
+  opay: "NGR999", palmpay: "NGR999",
+  "kuda": "NGR090267", "kuda bank": "NGR090267",
+  "sterling bank": "NGR232", sterling: "NGR232",
+  "fidelity bank": "NGR070", fidelity: "NGR070",
+  "union bank": "NGR032", union: "NGR032",
+  "stanbic ibtc": "NGR221", "stanbic ibtc bank": "NGR221",
+  "polaris bank": "NGR076", polaris: "NGR076",
+  "ecobank": "NGR050", "ecobank nigeria": "NGR050",
+  "fcmb": "NGR214", "first city monument bank": "NGR214",
+  "keystone bank": "NGR082", keystone: "NGR082",
+  "unity bank": "NGR215", unity: "NGR215",
+  "titan bank": "NGR101", titan: "NGR101",
+  "moniepoint": "NGR099", "moniepoint mfb": "NGR099",
+};
+
+function bankCodeFor(bankName) {
+  const raw = String(bankName || "").trim();
+  if (/^NGR\d+$/i.test(raw)) return raw.toUpperCase();
+  return BANK_CODES[raw.toLowerCase().replace(/\s+/g, " ")] || null;
+}
+
+function appUrl(req) {
+  return String(process.env.APP_URL || `https://${req.headers.host || "localhost"}`).replace(/\/$/, "");
+}
+
+function providerReference(data, fallback) {
+  return data?.transaction_id || data?.transactionId || data?.reference || data?.trx_id || data?.data?.transaction_id || data?.data?.reference || fallback;
+}
 
 async function isAdmin(id) {
   if(!id) return false;
@@ -202,7 +240,7 @@ module.exports = async function(req, res) {
   // ── POSTs ─────────────────────────────────────────────────────────────────
   if(action==="set-method") {
     const { method } = req.body;
-    if(!["manual","monnify"].includes(method)) return res.status(400).json({ error:"Invalid method" });
+    if(!["manual","monnify","targetgrowths"].includes(method)) return res.status(400).json({ error:"Invalid method" });
     const { error } = await supabase.from("site_settings").upsert({ key:"deposit_method", value:method, updated_at:new Date().toISOString() });
     if(error) return res.status(500).json({ error:error.message });
     return res.json({ ok:true, method });
@@ -356,16 +394,73 @@ module.exports = async function(req, res) {
     if(!withdrawal_id||!["approve","reject"].includes(act)) return res.status(400).json({ error:"withdrawal_id and act required" });
     const { data:w } = await supabase.from("withdrawals").select("*").eq("id",withdrawal_id).single();
     if(!w) return res.status(404).json({ error:"Not found" });
-    if(w.status!=="pending") return res.json({ ok:true, note:"already_processed" });
-    await supabase.from("withdrawals").update({ status: act==="approve"?"approved":"rejected", note:note||null, processed_by:admin_id, processed_at:new Date().toISOString() }).eq("id",withdrawal_id);
+    if(w.status!=="pending") return res.json({ ok:true, note:"already_processed", status:w.status, provider_status:w.provider_status||null });
+
     if(act==="reject") {
-      const { data:wallet } = await supabase.from("wallets").select("balance,total_withdrawn").eq("user_id",w.user_id).single();
-      const newBal = Number(wallet?.balance||0) + Number(w.amount);
-      const newWithdrawn = Math.max(0, Number(wallet?.total_withdrawn||0) - Number(w.amount));
-      await supabase.from("wallets").update({ balance:newBal, total_withdrawn:newWithdrawn, updated_at:new Date().toISOString() }).eq("user_id",w.user_id);
-      await supabase.from("wallet_transactions").insert({ user_id:w.user_id, type:"withdrawal_refund", amount:w.amount, description:"Withdrawal refunded" });
+      const { data, error } = await supabase.rpc("finalize_targetgrowths_withdrawal", {
+        p_withdrawal_id: withdrawal_id,
+        p_success: false,
+        p_provider_reference: null,
+        p_provider_status: "admin_rejected",
+        p_payload: { source:"admin_rejection", admin_id, note:note||null },
+      });
+      if(error) return res.status(500).json({ error:error.message });
+      return res.json({ ok:true, action:"reject", data });
     }
-    return res.json({ ok:true, action:act });
+
+    const bankId = w.bank_id || bankCodeFor(w.bank_name);
+    if(!bankId) return res.status(400).json({ error:"This bank is not configured for TargetGrowths payouts. Save the exact Nigerian bank name or bank code before approving." });
+
+    const { data:profile } = await supabase.from("profiles").select("full_name,email").eq("id",w.user_id).single();
+    const identifier = `TGW${String(withdrawal_id).replace(/-/g, "").slice(0, 12).toUpperCase()}${Date.now().toString(36).toUpperCase()}`;
+    const { data:claimed, error:claimError } = await supabase.from("withdrawals").update({
+      status:"approved",
+      provider:"targetgrowths",
+      provider_identifier:identifier,
+      provider_status:"initiating",
+      processed_by:admin_id,
+      processed_at:new Date().toISOString(),
+      note:note||null,
+    }).eq("id",withdrawal_id).eq("status","pending").select("*").single();
+    if(claimError || !claimed) return res.json({ ok:true, note:"already_processed" });
+
+    const payoutAmount = Number(w.net_amount ?? w.amount);
+    try {
+      const provider = await initiateTransfer({
+        identifier,
+        amount:payoutAmount,
+        bankId,
+        recipient:w.account_number,
+        accountName:w.account_name,
+        ipnUrl:`${appUrl(req)}/api/webhooks/targetgrowths`,
+        customerEmail:profile?.email,
+      });
+      const providerRef = providerReference(provider, identifier);
+      const { error:updateError } = await supabase.from("withdrawals").update({
+        status:"approved",
+        provider_status:String(provider?.status || provider?.data?.status || "pending").toLowerCase(),
+        provider_reference:providerRef,
+        provider_response:provider,
+        updated_at:new Date().toISOString(),
+      }).eq("id",withdrawal_id).eq("status","approved");
+      if(updateError) return res.status(500).json({ error:updateError.message });
+      return res.json({ ok:true, action:"approved", status:"provider_pending", provider_reference:providerRef });
+    } catch(e) {
+      console.error("[targetgrowths-transfer]", e);
+      if(e.retryable) {
+        await supabase.from("withdrawals").update({ provider_status:"manual_review", note:"TargetGrowths request timed out or could not be confirmed. Do not retry until the provider is checked.", updated_at:new Date().toISOString() }).eq("id",withdrawal_id).eq("status","approved");
+        return res.status(502).json({ error:"TargetGrowths did not confirm the payout. The withdrawal was left for manual review." });
+      }
+      const { error:refundError } = await supabase.rpc("finalize_targetgrowths_withdrawal", {
+        p_withdrawal_id: withdrawal_id,
+        p_success: false,
+        p_provider_reference: identifier,
+        p_provider_status: "initiation_failed",
+        p_payload: { source:"targetgrowths_transfer_error", error:e.message, provider_response:e.providerResponse||null },
+      });
+      if(refundError) return res.status(500).json({ error:`${e.message}; refund failed: ${refundError.message}` });
+      return res.status(502).json({ error:e.message || "TargetGrowths payout failed" });
+    }
   }
 
   if(action==="send-message") {

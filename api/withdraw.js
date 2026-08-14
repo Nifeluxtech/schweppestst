@@ -37,7 +37,7 @@ module.exports = async function(req, res) {
 
   if(req.method!=="POST") return res.status(405).json({ error:"Method not allowed" });
 
-  const { amount, bank_name, account_number, account_name } = req.body;
+  const { amount, bank_name, bank_id, account_number, account_name } = req.body;
   if(!amount||!bank_name||!account_number||!account_name) return res.status(400).json({ error:"All fields required" });
   const num = Number(amount);
   if(isNaN(num) || num <= 0) return res.status(400).json({ error:"Invalid amount" });
@@ -46,6 +46,7 @@ module.exports = async function(req, res) {
   // place — the request_withdrawal() Postgres function — so the admin
   // toggles actually take effect and there's no read-then-write race
   // on the wallet balance.
+  const requestStartedAt = new Date().toISOString();
   const { data, error } = await supabase.rpc("request_withdrawal", {
     p_user_id: user_id,
     p_amount: num,
@@ -65,6 +66,16 @@ module.exports = async function(req, res) {
       insufficient_balance: "Insufficient balance",
     };
     return res.json({ ok:false, error: messages[data?.error] || data?.error || "Withdrawal failed" });
+  }
+
+  if(bank_id) {
+    const withdrawalId = data.withdrawal_id || data.id;
+    if(withdrawalId) {
+      await supabase.from("withdrawals").update({ bank_id }).eq("id", withdrawalId).eq("user_id", user_id);
+    } else {
+      const { data:created } = await supabase.from("withdrawals").select("id").eq("user_id", user_id).eq("status", "pending").gte("created_at", requestStartedAt).order("created_at", { ascending:false }).limit(1).maybeSingle();
+      if(created?.id) await supabase.from("withdrawals").update({ bank_id }).eq("id", created.id);
+    }
   }
 
   return res.json({ ok:true, amount:data.amount, fee:data.fee, net:data.net });
