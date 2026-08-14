@@ -139,7 +139,7 @@ module.exports = async function handler(req, res) {
   if (action === "initiate-targetgrowths") {
     if (!user_id || !amount) return res.status(400).json({ error: "user_id and amount required" });
     const num = Number(amount);
-    if (!Number.isFinite(num) || num < 500) return res.status(400).json({ error: "Minimum deposit is ₦500" });
+    if (!Number.isFinite(num) || num < 600) return res.status(400).json({ error: "Minimum TargetGrowths deposit is ₦600" });
 
     const { data: profile } = await supabase.from("profiles").select("full_name,email").eq("id", user_id).single();
     const email = profile?.email || req.body.email;
@@ -167,7 +167,7 @@ module.exports = async function handler(req, res) {
         amount: num,
         details: `Wallet deposit for ${profile?.full_name || email}`,
         ipnUrl: `${origin}/api/webhooks/targetgrowths`,
-        successUrl: `${origin}/recharge.html?targetgrowths=success&ref=${encodeURIComponent(reference)}`,
+        successUrl: `${origin}/dashboard.html?targetgrowths=success&ref=${encodeURIComponent(reference)}`,
         cancelUrl: `${origin}/recharge.html?targetgrowths=cancelled&ref=${encodeURIComponent(reference)}`,
         siteLogo: origin,
         customerName: profile?.full_name || email,
