@@ -367,10 +367,12 @@
     el.innerHTML=deps.map(function(dep){
       var name=dep.profiles?.full_name||dep.profiles?.email||"User";
       var sColor={pending:"#FCD34D",completed:"#34D399",rejected:"#f87171"}[dep.status]||"#8A7F78";
-      var canAct=dep.status==="pending";
+      var isTargetGrowths=dep.provider==="targetgrowths"||dep.method==="targetgrowths";
+      var canAct=dep.status==="pending"&&!isTargetGrowths;
       var methodLabel=dep.method==="monnify"?"⚡ Monnify":(dep.method==="targetgrowths"?"💳 TargetGrowths":"🏦 Manual");
       return '<div class="dep-row"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div class="dep-name">'+name+' <span style="font-size:10px;color:#8A7F78">'+methodLabel+'</span></div><div class="dep-meta">'+dep.profiles?.email+' · '+new Date(dep.created_at).toLocaleString()+'</div>'+(dep.sender_name?'<div class="dep-meta">Sender: <span style="color:#FCD34D;font-weight:700">'+dep.sender_name+'</span></div>':'')+'</div><div style="text-align:right"><div class="dep-amt">₦'+Number(dep.amount).toLocaleString()+'</div><div style="font-size:11px;font-weight:700;color:'+sColor+'">'+dep.status.toUpperCase()+'</div></div></div>'+
         (dep.narration?'<div class="dep-nar"><span class="dep-nar-code">'+dep.narration+'</span><button onclick="copyTxt(\''+dep.narration+'\')" style="background:none;border:none;color:#FCD34D;font-size:11px;cursor:pointer;font-weight:700">COPY</button></div>':'')+
+        (isTargetGrowths&&dep.status==="pending"?'<div class="dep-meta" style="margin-top:8px;color:#FCD34D">Automatic credit pending verified TargetGrowths webhook</div>':'')+
         (canAct?'<div class="dep-actions"><button class="btn-approve" onclick="actDep(\''+dep.id+'\',\'approve\',this)">✅ Approve</button><button class="btn-reject" onclick="actDep(\''+dep.id+'\',\'reject\',this)">❌ Reject</button></div>':'')+'</div>';
     }).join("");
   };
@@ -396,7 +398,10 @@
     el.innerHTML=ws.map(function(w){
       var name=w.profiles?.full_name||w.profiles?.email||"User";
       var canAct=w.status==="pending";
-      var sColor={pending:"#FCD34D",approved:"#34D399",completed:"#34D399",rejected:"#f87171"}[w.status]||"#8A7F78";
+      var providerState=String(w.provider_status||"").toLowerCase();
+      var providerPending=w.status==="approved" && providerState && !["completed","success","successful","paid","settled"].includes(providerState);
+      var displayStatus=providerPending?"PROVIDER PENDING":w.status.toUpperCase();
+      var sColor=providerPending?"#FCD34D":({pending:"#FCD34D",approved:"#60A5FA",completed:"#34D399",rejected:"#f87171"}[w.status]||"#8A7F78");
       var gross=Number(w.amount||0);
       // fee_amount/net_amount are stamped at request time by request_withdrawal()
       // using whatever withdrawal_fee_percent was active then. Older rows created
@@ -406,8 +411,8 @@
       var net = hasNet ? Number(w.net_amount) : gross*0.87;
       var fee = hasNet ? Number(w.fee_amount||0) : gross*0.13;
       var netNote = hasNet ? '' : ' <span style="color:#f87171">(est. 13% — not on file)</span>';
-      return '<div class="dep-row"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div class="dep-name">'+name+'</div><div class="dep-meta">'+w.bank_name+' · '+w.account_number+'</div><div class="dep-meta">'+w.account_name+' · '+new Date(w.created_at).toLocaleString()+'</div></div><div style="text-align:right"><div class="dep-amt">₦'+net.toLocaleString(undefined,{maximumFractionDigits:2})+'</div><div style="font-size:10.5px;color:#8A7F78;margin-top:2px">Requested ₦'+gross.toLocaleString()+' − fee ₦'+fee.toLocaleString(undefined,{maximumFractionDigits:2})+netNote+'</div><div style="font-size:11px;font-weight:700;color:'+sColor+';margin-top:4px">'+w.status.toUpperCase()+'</div></div></div>'+
-        (w.provider_status?'<div class="dep-meta" style="margin-top:6px">Provider: <span style="color:#FCD34D">'+w.provider_status+'</span>'+(w.provider_reference?' · '+w.provider_reference:'')+'</div>':'')+
+      return '<div class="dep-row"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div class="dep-name">'+name+'</div><div class="dep-meta">'+w.bank_name+' · '+w.account_number+'</div><div class="dep-meta">'+w.account_name+' · '+new Date(w.created_at).toLocaleString()+'</div></div><div style="text-align:right"><div class="dep-amt">₦'+net.toLocaleString(undefined,{maximumFractionDigits:2})+'</div><div style="font-size:10.5px;color:#8A7F78;margin-top:2px">Requested ₦'+gross.toLocaleString()+' − fee ₦'+fee.toLocaleString(undefined,{maximumFractionDigits:2})+netNote+'</div><div style="font-size:11px;font-weight:700;color:'+sColor+';margin-top:4px">'+displayStatus+'</div></div></div>'+
+        (w.provider_status?'<div class="dep-meta" style="margin-top:6px">Provider: <span style="color:'+(providerPending?'#FCD34D':(providerState==='completed'?'#34D399':'#F87171'))+'">'+w.provider_status+'</span>'+(w.provider_reference?' · '+w.provider_reference:'')+'</div>':'')+
         (canAct?'<div class="dep-actions" style="margin-top:10px"><button class="btn-approve" onclick="actW(\''+w.id+'\',\'approve\',this)">✅ Approve &amp; Pay</button><button class="btn-reject" onclick="actW(\''+w.id+'\',\'reject\',this)">❌ Reject</button></div>':'')+'</div>';
     }).join("");
   };
