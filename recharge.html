@@ -222,7 +222,7 @@
       targetSection.style.display="block";
       btn.style.display="block";
       btn.textContent="Pay Securely";
-      infoList.innerHTML='<li><span>•</span>Payments are completed on TargetGrowths secure checkout</li><li><span>•</span>Minimum deposit: ₦500</li><li><span>•</span>Your wallet is credited after verified confirmation</li>';
+      infoList.innerHTML='<li><span>•</span>Payments are completed on TargetGrowths secure checkout</li><li><span>•</span>Minimum TargetGrowths deposit: ₦600</li><li><span>•</span>Your wallet is credited after verified confirmation</li>';
     } else {
       manualAmt.style.display="block";
       methodCard.style.display="block";
@@ -263,7 +263,8 @@
     validateForm();
   };
   function validateForm(){
-    document.getElementById("rechBtn").disabled = !(selAmt>=500 && senderName.trim().length>0);
+    var min=activeMethod==="targetgrowths"?600:500;
+    document.getElementById("rechBtn").disabled = !(selAmt>=min && (activeMethod==="targetgrowths" || senderName.trim().length>0));
   }
   function updateAmtDisplay(){
     var el=document.getElementById("ti-amt"),cp=document.getElementById("tiAmtCopy");
@@ -272,7 +273,8 @@
   }
 
   async function handleRecharge(){
-    if(!selAmt||selAmt<500){ window.AradelAuth.toast("Minimum deposit is ₦500"); return; }
+    var min=activeMethod==="targetgrowths"?600:500;
+    if(!selAmt||selAmt<min){ window.AradelAuth.toast("Minimum "+(activeMethod==="targetgrowths"?"TargetGrowths ":"")+"deposit is ₦"+min); return; }
     if(activeMethod!=="targetgrowths" && !senderName.trim()){ window.AradelAuth.toast("Please enter the sender's name"); return; }
     var btn=document.getElementById("rechBtn");
     btn.disabled=true; btn.textContent="Processing…";
