@@ -377,6 +377,7 @@ module.exports = async function(req, res) {
     if(!deposit_id||!["approve","reject"].includes(act)) return res.status(400).json({ error:"deposit_id and act required" });
     const { data:dep } = await supabase.from("deposits").select("*").eq("id",deposit_id).single();
     if(!dep) return res.status(404).json({ error:"Not found" });
+    if(dep.provider==="targetgrowths" || dep.method==="targetgrowths") return res.status(409).json({ error:"TargetGrowths deposits are credited automatically after verified payment confirmation; admin approval is not permitted." });
     if(dep.status==="completed") return res.json({ ok:true, note:"already_completed" });
     if(dep.status==="rejected") return res.json({ ok:true, note:"already_rejected" });
     if(act==="reject") {
