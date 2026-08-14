@@ -122,7 +122,7 @@ module.exports = async function handler(req, res) {
     provider_response: payload,
     updated_at: new Date().toISOString(),
   }).eq("id", deposit.id);
-  return res.json({ ok: true, data });
+  return res.json({ ok: true, action: "auto_credited", data });
 };
 
 module.exports.config = { api: { bodyParser: false } };
