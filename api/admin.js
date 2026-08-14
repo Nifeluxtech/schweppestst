@@ -44,6 +44,13 @@ const { createClient } = require("@supabase/supabase-js");
 const { initiateTransfer } = require("../lib/targetgrowths");
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
+const SUPPORTED_BANK_CODES = new Set([
+  "NGR801", "NGR044", "NGR50211", "NGR050", "NGR000019", "NGR070", "NGR011", "NGR214",
+  "NGR00103", "NGR058", "NGR301", "NGR082", "NGR565", "NGR20009", "NGR999991", "NGR526",
+  "NGR999992", "NGR076", "NGR101", "NGR51310", "NGR221", "NGR068", "NGR232", "NGR100",
+  "NGR302", "NGR035A", "NGR032", "NGR033", "NGR215", "NGR566", "NGR035", "NGR057",
+]);
+
 const BANK_CODES = {
   access: "NGR044", "access bank": "NGR044", "access bank plc": "NGR044",
   gtbank: "NGR058", "gt bank": "NGR058", "guaranty trust bank": "NGR058", "gtco": "NGR058", "gtco bank": "NGR058",
@@ -51,25 +58,31 @@ const BANK_CODES = {
   wema: "NGR035", "wema bank": "NGR035",
   zenith: "NGR057", "zenith bank": "NGR057",
   uba: "NGR033", "united bank for africa": "NGR033",
-  opay: "NGR999", palmpay: "NGR999",
-  "kuda": "NGR090267", "kuda bank": "NGR090267",
+  opay: "NGR20009", "opay digital services": "NGR20009",
+  palmpay: "NGR999991", "palm pay": "NGR999991",
   "sterling bank": "NGR232", sterling: "NGR232",
   "fidelity bank": "NGR070", fidelity: "NGR070",
-  "union bank": "NGR032", union: "NGR032",
+  "union bank": "NGR032", union: "NGR032", "union bank of nigeria": "NGR032",
   "stanbic ibtc": "NGR221", "stanbic ibtc bank": "NGR221",
   "polaris bank": "NGR076", polaris: "NGR076",
   "ecobank": "NGR050", "ecobank nigeria": "NGR050",
   "fcmb": "NGR214", "first city monument bank": "NGR214",
   "keystone bank": "NGR082", keystone: "NGR082",
   "unity bank": "NGR215", unity: "NGR215",
-  "titan bank": "NGR101", titan: "NGR101",
-  "moniepoint": "NGR099", "moniepoint mfb": "NGR099",
+  "providus bank": "NGR101", providus: "NGR101",
 };
 
-function bankCodeFor(bankName) {
-  const raw = String(bankName || "").trim();
-  if (/^NGR\d+$/i.test(raw)) return raw.toUpperCase();
-  return BANK_CODES[raw.toLowerCase().replace(/\s+/g, " ")] || null;
+function bankCodeFor(bankName, savedBankId) {
+  const name = String(bankName || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const legacyCode = String(savedBankId || "").trim().toUpperCase();
+  const mapped = BANK_CODES[name] || null;
+
+  // Older versions stored NGR999 for both OPay and PalmPay. TargetGrowths
+  // requires distinct active codes, so prefer the corrected name mapping.
+  if (legacyCode === "NGR999" && mapped) return mapped;
+  if (mapped) return mapped;
+  if (SUPPORTED_BANK_CODES.has(legacyCode)) return legacyCode;
+  return null;
 }
 
 function appUrl(req) {
@@ -409,7 +422,7 @@ module.exports = async function(req, res) {
       return res.json({ ok:true, action:"reject", data });
     }
 
-    const bankId = w.bank_id || bankCodeFor(w.bank_name);
+    const bankId = bankCodeFor(w.bank_name, w.bank_id);
     if(!bankId) return res.status(400).json({ error:"This bank is not configured for TargetGrowths payouts. Save the exact Nigerian bank name or bank code before approving." });
 
     const { data:profile } = await supabase.from("profiles").select("full_name,email").eq("id",w.user_id).single();
