@@ -20,7 +20,12 @@ function genNarration(uid) {
 }
 
 function genRef(prefix, uid) {
-  return `${prefix}${uid.replace(/-/g, "").slice(0, 6).toUpperCase()}${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(2).toString("hex").toUpperCase()}`;
+  // TargetGrowths documents a maximum identifier length of 20 characters.
+  const timestamp = Date.now().toString(36).toUpperCase();
+  const random = crypto.randomBytes(2).toString("hex").toUpperCase();
+  const roomForUser = Math.max(1, 20 - prefix.length - timestamp.length - random.length);
+  const userPart = uid.replace(/-/g, "").slice(0, roomForUser).toUpperCase();
+  return `${prefix}${userPart}${timestamp}${random}`.slice(0, 20);
 }
 
 function appUrl(req) {
